@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تسجيل القراءة | Super Goal 3</title>
+<meta name="robots" content="noindex">
+<style>
+:root{--bg:#f4f6f5;--card:#fff;--text:#16211e;--muted:#5d6b67;--line:#dbe3e0;--primary:#0f6b5c;--on-primary:#fff;--danger:#b3261e;--ok:#1d7a3e;--warn:#8a5a00;--warn-bg:#fff4dc}
+@media (prefers-color-scheme:dark){:root{--bg:#101615;--card:#18211f;--text:#e7eeec;--muted:#9fb0ab;--line:#2b3734;--primary:#4fb7a3;--on-primary:#06201b;--danger:#ff8a80;--ok:#7bd59a;--warn:#ffcc66;--warn-bg:#2f2610;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:20px 16px 40px;display:grid;gap:14px}
+h1{font-size:20px;margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.muted{color:var(--muted)}.small{font-size:14px}
+.en{direction:ltr;text-align:left;font-family:Georgia,"Times New Roman",serif}
+.readtext{font-size:20px;line-height:1.9;white-space:pre-wrap}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px 20px;min-height:48px;cursor:pointer;background:var(--primary);color:var(--on-primary)}
+.btn.sec{background:transparent;color:var(--primary);border:1px solid var(--primary)}
+.btn.danger{background:var(--danger);color:#fff}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn:focus-visible{outline:3px solid var(--text);outline-offset:2px}
+.meter{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.meter i{display:block;height:100%;width:0;background:var(--primary);transition:width .1s}
+.alert{border-radius:10px;padding:10px 12px;font-size:14px}.alert.warn{background:var(--warn-bg);color:var(--warn)}.alert.ok{color:var(--ok);border:1px solid var(--ok)}.alert.bad{color:var(--danger);border:1px solid var(--danger)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header><h1>🎙️ تسجيل القراءة</h1><div class="small muted" id="sub">منصة Super Goal 3</div></header>
+  <div class="alert warn" id="noJob" hidden>هذه صفحة التسجيل لمنصة Super Goal 3، وتُفتح تلقائيًا من داخل المنصة عند الضغط على "ابدأ التسجيل". لا تُستخدم وحدها.</div>
+  <section class="card" id="textCard" hidden><div class="small muted" id="title"></div><div class="readtext en" id="text"></div></section>
+  <section class="card" id="recCard" hidden>
+    <div class="row">
+      <button class="btn" id="start" type="button">⏺ ابدأ التسجيل</button>
+      <button class="btn danger" id="stop" type="button" hidden>⏹ إنهاء وإرسال</button>
+      <button class="btn sec" id="cancel" type="button">إلغاء</button>
+    </div>
+    <p class="small" id="state" aria-live="polite">اضغط "ابدأ التسجيل" واسمح باستخدام الميكروفون، ثم اقرأ النص بصوت واضح.</p>
+    <div class="meter" aria-hidden="true"><i id="lvl"></i></div>
+    <div class="small muted en" id="live"></div>
+    <p class="small muted">صوتك لا يُحفظ: يُحوَّل إلى نص في المتصفح، ثم تُرسل النتيجة إلى المنصة وتُغلق هذه النافذة.</p>
+  </section>
+  <div id="done" hidden></div>
+</main>
+<script>
+(function(){
+function SpeechRec(){ return window.SpeechRecognition || window.webkitSpeechRecognition || null; }
+
+// تسجيل القراءة: مستوى الصوت لقياس التوقفات (في المتصفح)، والتعرف على الكلام بمحرك المتصفح أو بإرسال الصوت إلى الخادم.
+// لا يُحفظ الصوت في أي مكان: يبقى في ذاكرة الصفحة حتى ينتهي التقييم ثم يُترك.
+function startReadingCapture(engine, cb){
+  var AC = window.AudioContext || window.webkitAudioContext;
+  var rec = { engine: engine, levels: [], samples: [], finals: [], interim: '', stopped: false, t0: Date.now(), frameSec: 0, rate: 0, err: null };
+  function levelLoop(stream){
+    var ctx = new AC();
+    var src = ctx.createMediaStreamSource(stream);
+    var proc = ctx.createScriptProcessor(2048, 1, 1);
+    var mute = ctx.createGain(); mute.gain.value = 0;
+    rec.rate = ctx.sampleRate; rec.frameSec = 2048 / ctx.sampleRate;
+    proc.onaudioprocess = function(e){
+      if (rec.stopped) return;
+      var d = e.inputBuffer.getChannelData(0), s = 0;
+      for (var i = 0; i < d.length; i++) s += d[i] * d[i];
+      var rms = Math.sqrt(s / d.length);
+      rec.levels.push(rms);
+      if (engine === 'cloud') rec.samples.push(new Float32Array(d));
+      if (cb.onLevel) cb.onLevel(rms);
+    };
+    src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+    rec.ctx = ctx; rec.stream = stream;
+  }
+  function startRecognition(){
+    var R = SpeechRec(); var r = new R();
+    r.lang = 'en-US'; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+    r.onresult = function(e){
+      var interim = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) rec.finals.push(e.results[i][0].transcript); else interim += e.results[i][0].transcript;
+      }
+      rec.interim = interim;
+      if (cb.onText) cb.onText(rec.finals.join(' ') + ' ' + interim);
+    };
+    r.onerror = function(e){ if (e.error !== 'no-speech' && e.error !== 'aborted') rec.err = e.error; };
+    // Chrome يُنهي التعرف بعد صمت طويل؛ نعيد تشغيله ما دام التسجيل مستمرًا
+    r.onend = function(){ if (!rec.stopped && !rec.err) { try { r.start(); } catch(x){} } else if (rec.onRecEnd) rec.onRecEnd(); };
+    r.start();
+    rec.recog = r;
+  }
+  var gum = navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }) : Promise.reject(new Error('nomedia'));
+  return gum.then(function(stream){ levelLoop(stream); }, function(e){
+    if (engine === 'cloud') throw e;
+    rec.noLevels = true; // محرك المتصفح يعمل دون قياس التوقفات
+  }).then(function(){
+    if (engine === 'browser') startRecognition();
+    rec.stop = function(){
+      rec.stopped = true;
+      return new Promise(function(resolve){
+        var finish = function(){
+          try { if (rec.stream) rec.stream.getTracks().forEach(function(t){ t.stop(); }); } catch(x){}
+          try { if (rec.ctx) rec.ctx.close(); } catch(x){}
+          resolve(rec);
+        };
+        if (rec.recog) { var done = false; rec.onRecEnd = function(){ if (!done) { done = true; finish(); } }; try { rec.recog.stop(); } catch(x){ finish(); } setTimeout(function(){ if (!done) { done = true; finish(); } }, 2500); }
+        else finish();
+      });
+    };
+    return rec;
+  });
+}
+// التوقفات من مستوى الصوت: عتبة تتكيف مع ضجيج الغرفة، ويُتجاهل الصوت القصير جدًا
+function analyzeLevels(levels, frameSec){
+  if (!levels || levels.length < 5) return null;
+  var sorted = levels.slice().sort(function(a,b){ return a - b; });
+  // ضجيج الغرفة من أهدأ 10% من الإطارات؛ والعتبة لا تتجاوز ربع ذروة الصوت حتى لو كان التسجيل كله كلامًا تقريبًا
+  var floor = sorted[Math.floor(sorted.length * 0.1)], peak = sorted[Math.floor(sorted.length * 0.98)];
+  var thr = Math.max(Math.min(floor * 3, peak * 0.25), peak * 0.08, 0.004);
+  var voiced = levels.map(function(v){ return v > thr; });
+  // سد الفجوات الأقصر من 0.25 ث وحذف الأصوات الأقصر من 0.12 ث
+  var segs = [], cur = null;
+  voiced.forEach(function(v, i){ if (v) { if (cur && (i - cur.e) * frameSec <= 0.25) cur.e = i; else { cur = { s: i, e: i }; segs.push(cur); } } });
+  segs = segs.filter(function(g){ return (g.e - g.s + 1) * frameSec >= 0.12; });
+  if (!segs.length) return { duration: levels.length * frameSec, speechStart: 0, speechEnd: 0, pauses: [], voiced: false };
+  var pauses = [];
+  for (var k = 1; k < segs.length; k++) {
+    var gap = (segs[k].s - segs[k - 1].e - 1) * frameSec;
+    if (gap >= 0.6) pauses.push({ at: Math.round((segs[k - 1].e + 1) * frameSec * 10) / 10, dur: Math.round(gap * 100) / 100 });
+  }
+  return { duration: levels.length * frameSec, speechStart: segs[0].s * frameSec, speechEnd: (segs[segs.length - 1].e + 1) * frameSec, pauses: pauses, voiced: true };
+}
+// الصوت إلى WAV بتردد 16 kHz، مقسومًا عند فترات الصمت إلى أجزاء أقل من 50 ثانية (حد خدمة التحويل المتزامن 60 ث)
+function wavChunks(rec, audio){
+  var all = new Float32Array(rec.samples.reduce(function(n, a){ return n + a.length; }, 0)), o = 0;
+  rec.samples.forEach(function(a){ all.set(a, o); o += a.length; });
+  var ratio = rec.rate / 16000, n = Math.floor(all.length / ratio), pcm = new Int16Array(n);
+  for (var i = 0; i < n; i++) {
+    var s = 0, a0 = Math.floor(i * ratio), a1 = Math.min(all.length, Math.floor((i + 1) * ratio)), c = 0;
+    for (var j = a0; j < a1; j++) { s += all[j]; c++; }
+    var v = c ? s / c : 0; pcm[i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+  }
+  var cuts = [0], last = 0, maxS = 50;
+  ((audio && audio.pauses) || []).forEach(function(p){ var mid = p.at + p.dur / 2; if (mid - last > 20 && mid - last <= maxS) { cuts.push(mid); last = mid; } });
+  var dur = n / 16000; while (dur - last > maxS) { last += maxS; cuts.push(last); }
+  cuts.push(dur);
+  var out = [];
+  for (var k = 0; k + 1 < cuts.length; k++) {
+    var from = Math.floor(cuts[k] * 16000), to = Math.floor(cuts[k + 1] * 16000);
+    if (to - from < 1600) continue;
+    out.push({ offset: Math.round(cuts[k] * 100) / 100, sampleRate: 16000, data: wavBase64(pcm.subarray(from, to)) });
+  }
+  return out;
+}
+function wavBase64(pcm){
+  var buf = new ArrayBuffer(44 + pcm.length * 2), dv = new DataView(buf), p = 0;
+  function str(s){ for (var i = 0; i < s.length; i++) dv.setUint8(p++, s.charCodeAt(i)); }
+  str('RIFF'); dv.setUint32(p, 36 + pcm.length * 2, true); p += 4; str('WAVE'); str('fmt ');
+  dv.setUint32(p, 16, true); p += 4; dv.setUint16(p, 1, true); p += 2; dv.setUint16(p, 1, true); p += 2;
+  dv.setUint32(p, 16000, true); p += 4; dv.setUint32(p, 32000, true); p += 4; dv.setUint16(p, 2, true); p += 2; dv.setUint16(p, 16, true); p += 2;
+  str('data'); dv.setUint32(p, pcm.length * 2, true); p += 4;
+  for (var i = 0; i < pcm.length; i++, p += 2) dv.setInt16(p, pcm[i], true);
+  var bytes = new Uint8Array(buf), bin = '';
+  for (var k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+  return btoa(bin);
+}
+function newAttemptId(){ var a = new Uint8Array(8); (window.crypto || window.msCrypto).getRandomValues(a); return Array.prototype.map.call(a, function(b){ return ('0' + b.toString(16)).slice(-2); }).join(''); }
+function micErrorText(e){
+  var n = e && (e.name || e.message || e);
+  if (n === 'NotAllowedError' || n === 'not-allowed' || n === 'service-not-allowed' || n === 'SecurityError') return 'لم يُسمح باستخدام الميكروفون. اسمح للموقع باستخدامه من إعدادات المتصفح (رمز القفل بجانب الرابط) ثم أعد المحاولة.';
+  if (n === 'NotFoundError' || n === 'audio-capture') return 'لم يُعثر على ميكروفون في هذا الجهاز.';
+  if (n === 'network') return 'خدمة التعرف على الكلام في المتصفح تحتاج اتصالًا بالإنترنت.';
+  return 'تعذر تشغيل التسجيل: ' + n;
+}
+
+var $ = function(s){ return document.querySelector(s); };
+var job = null;
+try { job = JSON.parse(decodeURIComponent(location.hash.slice(1))); } catch(e) {}
+if (!job || job.v !== 1 || !job.n) { $('#noJob').hidden = false; return; }
+history.replaceState(null, '', location.pathname); // لا يبقى النص والمعرف في سجل المتصفح
+var engine = job.engine === 'cloud' ? 'cloud' : 'browser', MAX = Math.min(Number(job.maxSec) || 120, 180);
+var sent = false, rec = null, timer = null, t0 = 0;
+$('#title').textContent = job.title || '';
+$('#text').textContent = job.text || '';
+$('#textCard').hidden = !job.text; $('#recCard').hidden = false;
+if (job.mode === 'test') $('#sub').textContent = 'اختبار الميكروفون والتعرف على الكلام · تحدث بالإنجليزية بضع ثوانٍ';
+if (engine === 'browser' && !SpeechRec()) { $('#state').textContent = 'هذا المتصفح لا يدعم التعرف على الكلام. استخدم Safari على iPhone/iPad أو Chrome.'; $('#start').disabled = true; }
+function send(msg){
+  if (sent) return true; sent = true;
+  msg.sg3rec = 1; msg.n = job.n;
+  if (!window.opener || window.opener.closed) return false;
+  try { window.opener.postMessage(msg, '*'); return true; } catch(e) { return false; }
+}
+function closeSoon(ok){
+  $('#recCard').hidden = true;
+  var d = $('#done'); d.hidden = false;
+  d.innerHTML = ok ? '<div class="alert ok">✓ أُرسلت القراءة إلى المنصة. ارجع إلى صفحة المنصة لترى النتيجة.</div>' :
+    '<div class="alert bad">تعذر إعادة النتيجة إلى المنصة لأن صفحتها أُغلقت. افتح الدرس من جديد وأعد المحاولة.</div>';
+  setTimeout(function(){ try { window.close(); } catch(e){} }, 900);
+}
+$('#start').onclick = function(){
+  var b = this; b.disabled = true; $('#state').textContent = 'جارٍ تشغيل الميكروفون…';
+  startReadingCapture(engine, {
+    onLevel: function(v){ $('#lvl').style.width = Math.min(100, Math.round(v * 600)) + '%'; },
+    onText: function(x){ $('#live').textContent = x.slice(-160); }
+  }).then(function(r){
+    rec = r; t0 = Date.now();
+    b.hidden = true; $('#stop').hidden = false;
+    var tick = function(){ var s = Math.round((Date.now() - t0) / 1000); $('#state').textContent = '● جارٍ التسجيل ' + s + ' ث' + (r.noLevels ? ' (دون قياس التوقفات على هذا الجهاز)' : ''); if (s >= MAX) $('#stop').click(); };
+    tick(); timer = setInterval(tick, 500);
+  }, function(e){ b.disabled = false; $('#state').textContent = '✕ ' + micErrorText(e); });
+};
+$('#stop').onclick = function(){
+  if (!rec) return;
+  this.disabled = true; clearInterval(timer); $('#state').textContent = 'جارٍ الإرسال…';
+  rec.stop().then(function(r){
+    var audio = r.noLevels ? null : analyzeLevels(r.levels, r.frameSec);
+    var msg = { err: r.err || null, transcript: (r.finals.join(' ') + ' ' + (r.interim || '')).trim(), audio: audio, noLevels: !!r.noLevels,
+      audioChunks: engine === 'cloud' && !r.err && audio && audio.voiced ? wavChunks(r, audio) : null };
+    r.samples = null;
+    closeSoon(send(msg));
+  });
+};
+$('#cancel').onclick = function(){ try { if (rec) rec.stop(); } catch(e){} send({ cancel: true }); try { window.close(); } catch(e){} };
+window.addEventListener('pagehide', function(){ send({ cancel: true }); });
+})();
+</script>
+</body>
+</html>
